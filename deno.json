@@ -6,6 +6,7 @@
   "imports": {
     "@std/path": "jsr:@std/path@^1",
     "@std/fs": "jsr:@std/fs@^1",
-    "@std/cli": "jsr:@std/cli@^1"
+    "@std/cli": "jsr:@std/cli@^1",
+    "ky": "npm:ky@^1"
   }
 }

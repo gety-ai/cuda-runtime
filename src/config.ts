@@ -9,6 +9,9 @@ export const CUDNN_REDIST_BASE_URL =
 /** Target platform */
 export const PLATFORM = "windows-x86_64";
 
+/** Default retry count for HTTP requests */
+export const DEFAULT_RETRY_COUNT = 3;
+
 /**
  * CUDA runtime packages to download.
  * These are the shared libraries (DLLs) needed at runtime.

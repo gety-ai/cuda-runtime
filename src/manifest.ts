@@ -3,6 +3,7 @@ import {
   CUDNN_REDIST_BASE_URL,
   PLATFORM,
 } from "./config.ts";
+import { http } from "./http.ts";
 
 export interface PackageDownloadInfo {
   packageName: string;
@@ -18,11 +19,7 @@ type Manifest = Record<string, any>;
 
 async function fetchManifest(url: string): Promise<Manifest> {
   console.log(`Fetching manifest: ${url}`);
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status} fetching ${url}`);
-  }
-  return await resp.json();
+  return await http.get(url).json();
 }
 
 /**
@@ -52,11 +49,7 @@ export async function findLatestCompatibleCudnn(
   console.log(`Searching for latest cuDNN compatible with CUDA ${cudaMajorVersion}...`);
 
   // Fetch directory listing
-  const resp = await fetch(`${CUDNN_REDIST_BASE_URL}/`);
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status} fetching cuDNN redist index`);
-  }
-  const html = await resp.text();
+  const html = await http.get(`${CUDNN_REDIST_BASE_URL}/`).text();
 
   // Extract version strings from redistrib_<ver>.json links.
   // Prefer short versions (e.g. "9.5.1") over long ones (e.g. "9.5.1.17")
@@ -77,9 +70,7 @@ export async function findLatestCompatibleCudnn(
   for (const ver of shortVersions) {
     const manifestUrl = `${CUDNN_REDIST_BASE_URL}/redistrib_${ver}.json`;
     try {
-      const mResp = await fetch(manifestUrl);
-      if (!mResp.ok) continue;
-      const manifest: Manifest = await mResp.json();
+      const manifest: Manifest = await http.get(manifestUrl).json();
       const cudnn = manifest["cudnn"];
       if (!cudnn?.[PLATFORM]) continue;
 

@@ -2,6 +2,7 @@ import { ProgressBar } from "@std/cli/unstable-progress-bar";
 import type { ProgressBarFormatter } from "@std/cli/unstable-progress-bar";
 import { ensureDir } from "@std/fs/ensure-dir";
 import { dirname } from "@std/path";
+import { httpDownload } from "./http.ts";
 
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -37,10 +38,7 @@ export async function downloadFile(
   }
 
   console.log(`  Downloading: ${url}`);
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status} downloading ${url}`);
-  }
+  const resp = await httpDownload(url);
 
   const total = Number(resp.headers.get("content-length") ?? 0);
   const reader = resp.body!.getReader();
