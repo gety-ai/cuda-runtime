@@ -15,23 +15,48 @@ export function formatBytes(bytes: number): string {
 const CI_INTERVAL_MS = 5_000;
 
 /**
+ * Compute SHA256 hex digest of a file.
+ */
+async function sha256Hex(filePath: string): Promise<string> {
+  const data = await Deno.readFile(filePath);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(hash)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
  * Download a file with progress reporting.
  * - Interactive terminal: @std/cli ProgressBar with speed indicator.
  * - CI / piped: periodic log lines (every ~5 s).
- * Skips download if the file already exists with non-zero size.
+ *
+ * If a cached file exists and `expectedSha256` is provided, verifies the cache.
+ * On mismatch or incomplete file, deletes and re-downloads automatically.
  */
 export async function downloadFile(
   url: string,
   destPath: string,
+  expectedSha256?: string,
 ): Promise<void> {
   await ensureDir(dirname(destPath));
 
-  // Skip if already downloaded
+  // Check cached file
   try {
     const stat = await Deno.stat(destPath);
     if (stat.size > 0) {
-      console.log(`  Already downloaded: ${destPath} (${formatBytes(stat.size)})`);
-      return;
+      if (expectedSha256) {
+        console.log(`  Cached file found, verifying SHA256...`);
+        const actual = await sha256Hex(destPath);
+        if (actual === expectedSha256.toLowerCase()) {
+          console.log(`  Cache valid: ${destPath} (${formatBytes(stat.size)})`);
+          return;
+        }
+        console.warn(`  Cache corrupted (SHA256 mismatch), re-downloading...`);
+        await Deno.remove(destPath);
+      } else {
+        console.log(`  Already downloaded: ${destPath} (${formatBytes(stat.size)})`);
+        return;
+      }
     }
   } catch {
     // File doesn't exist, proceed
@@ -107,30 +132,17 @@ export async function downloadFile(
   } finally {
     file.close();
   }
-}
 
-/**
- * Verify SHA256 checksum of a file.
- */
-export async function verifySha256(
-  filePath: string,
-  expectedSha256: string,
-): Promise<boolean> {
-  if (!expectedSha256) return true;
-
-  console.log(`  Verifying SHA256...`);
-  const data = await Deno.readFile(filePath);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const hashHex = [...new Uint8Array(hash)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-
-  if (hashHex !== expectedSha256.toLowerCase()) {
-    console.error(
-      `  SHA256 MISMATCH!\n    Expected: ${expectedSha256}\n    Got:      ${hashHex}`,
-    );
-    return false;
+  // Verify freshly downloaded file
+  if (expectedSha256) {
+    console.log(`  Verifying SHA256...`);
+    const actual = await sha256Hex(destPath);
+    if (actual !== expectedSha256.toLowerCase()) {
+      await Deno.remove(destPath);
+      throw new Error(
+        `SHA256 mismatch after download.\n    Expected: ${expectedSha256}\n    Got:      ${actual}`,
+      );
+    }
+    console.log(`  SHA256 OK`);
   }
-  console.log(`  SHA256 OK`);
-  return true;
 }

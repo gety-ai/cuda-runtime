@@ -19,7 +19,7 @@ import {
   resolveCudnnPackages,
   type PackageDownloadInfo,
 } from "./src/manifest.ts";
-import { downloadFile, formatBytes, verifySha256 } from "./src/download.ts";
+import { downloadFile, formatBytes } from "./src/download.ts";
 import { collectRuntimeLibs, createArchive, extractArchive } from "./src/archive.ts";
 
 function printUsage() {
@@ -139,15 +139,7 @@ for (const pkg of allPackages) {
   const fileName = pkg.url.split("/").pop()!;
   const destPath = join(downloadDir, fileName);
   console.log(`\n[${pkg.displayName}]`);
-  await downloadFile(pkg.url, destPath);
-
-  if (!skipVerify && pkg.sha256) {
-    const ok = await verifySha256(destPath, pkg.sha256);
-    if (!ok) {
-      console.error(`SHA256 verification failed for ${fileName}`);
-      Deno.exit(1);
-    }
-  }
+  await downloadFile(pkg.url, destPath, skipVerify ? undefined : pkg.sha256);
 }
 
 // Step 3: Extract all packages
