@@ -192,3 +192,16 @@ console.log("\n=== Done! ===");
 console.log(`Archive: ${archivePath}`);
 console.log(`Size:    ${formatBytes(archiveStat.size)}`);
 console.log(`Files:   ${libs.length}`);
+
+// Write GitHub Actions outputs if running in CI
+const githubOutput = Deno.env.get("GITHUB_OUTPUT");
+if (githubOutput) {
+  const outputs = [
+    `cuda-version=${cudaVersion}`,
+    `cudnn-version=${cudnnVersion || ""}`,
+    `platform=${platform}`,
+    `archive-name=${archiveName}`,
+  ].join("\n") + "\n";
+  await Deno.writeTextFile(githubOutput, outputs, { append: true });
+  console.log("\nGitHub Actions outputs written.");
+}

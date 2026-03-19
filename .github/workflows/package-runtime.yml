@@ -28,21 +28,26 @@ jobs:
   package:
     strategy:
       matrix:
-        include: ${{ fromJson(inputs.platforms) }}
+        platform: ${{ fromJson(inputs.platforms) }}
       fail-fast: false
-    runs-on: ${{ contains(matrix.platform || fromJson(inputs.platforms)[0], 'windows') && 'windows-latest' || 'ubuntu-latest' }}
-    name: Package (${{ matrix.platform || fromJson(inputs.platforms)[0] }})
+    runs-on: ${{ contains(matrix.platform, 'windows') && 'windows-latest' || 'ubuntu-latest' }}
+    name: Package (${{ matrix.platform }})
+
+    outputs:
+      # Forward outputs from the last matrix leg — release job only needs
+      # cuda-version and cudnn-version which are identical across platforms.
+      cuda-version: ${{ steps.build.outputs.cuda-version }}
+      cudnn-version: ${{ steps.build.outputs.cudnn-version }}
 
     steps:
       - name: Resolve platform
         id: platform
         shell: bash
         run: |
-          # When matrix.platform is a string from the JSON array, parse os and arch
-          PLATFORM="${{ matrix.platform || fromJson(inputs.platforms)[0] }}"
-          echo "platform=${PLATFORM}" >> "$GITHUB_OUTPUT"
           echo "os=${PLATFORM%%-*}" >> "$GITHUB_OUTPUT"
           echo "arch=${PLATFORM##*-}" >> "$GITHUB_OUTPUT"
+        env:
+          PLATFORM: ${{ matrix.platform }}
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,9 +61,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ./tmp/downloads
-          key: cuda-downloads-${{ inputs.cuda-version }}-${{ inputs.cudnn-version }}-${{ steps.platform.outputs.platform }}
+          key: cuda-downloads-${{ inputs.cuda-version }}-${{ inputs.cudnn-version }}-${{ matrix.platform }}
 
       - name: Package CUDA Runtime
+        id: build
         shell: bash
         run: |
           deno run -A main.ts \
@@ -71,7 +77,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cuda-runtime-${{ inputs.cuda-version }}-${{ steps.platform.outputs.platform }}
+          name: cuda-${{ steps.build.outputs.cuda-version }}-cudnn-${{ steps.build.outputs.cudnn-version }}-${{ steps.build.outputs.platform }}
           path: ./output/*
 
   release:
@@ -84,19 +90,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: cuda-runtime-*
+          pattern: cuda-*
           merge-multiple: true
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: cuda-${{ inputs.cuda-version }}-cudnn-${{ inputs.cudnn-version }}
-          name: CUDA ${{ inputs.cuda-version }} + cuDNN ${{ inputs.cudnn-version }} Runtime
+          tag_name: cuda-${{ needs.package.outputs.cuda-version }}-cudnn-${{ needs.package.outputs.cudnn-version }}
+          name: CUDA ${{ needs.package.outputs.cuda-version }} + cuDNN ${{ needs.package.outputs.cudnn-version }} Runtime
           body: |
             CUDA/cuDNN runtime libraries.
 
-            - CUDA: ${{ inputs.cuda-version }}
-            - cuDNN: ${{ inputs.cudnn-version }}
+            - CUDA: ${{ needs.package.outputs.cuda-version }}
+            - cuDNN: ${{ needs.package.outputs.cudnn-version }}
             - Platforms: ${{ inputs.platforms }}
           files: artifacts/*
           draft: false
