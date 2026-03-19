@@ -194,6 +194,20 @@ const archivePath = join(outputDir, archiveName);
 console.log("\n--- Creating archive ---");
 await createArchive(collectDir, archivePath, os);
 
+// Step 7: Generate checksum
+console.log("\n--- Generating checksum ---");
+const archiveData = await Deno.readFile(archivePath);
+const hashBuf = await crypto.subtle.digest("SHA-256", archiveData);
+const sha256 = [...new Uint8Array(hashBuf)]
+  .map((b) => b.toString(16).padStart(2, "0"))
+  .join("");
+const checksumFile = `${archiveName}.sha256`;
+await Deno.writeTextFile(
+  join(outputDir, checksumFile),
+  `${sha256}  ${archiveName}\n`,
+);
+console.log(`  ${sha256}  ${archiveName}`);
+
 // Print summary
 const archiveStat = await Deno.stat(archivePath);
 console.log("\n=== Done! ===");
