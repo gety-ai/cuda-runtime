@@ -15,6 +15,14 @@ on:
         description: "Platforms to build (JSON array)"
         required: false
         default: '["windows-x86_64", "linux-x86_64"]'
+      profile:
+        description: "Build profile: full (all libs) or minimal (core libs only)"
+        required: false
+        type: choice
+        options:
+          - full
+          - minimal
+        default: "full"
       create-release:
         description: "Create a GitHub release with the archive"
         required: false
@@ -31,13 +39,12 @@ jobs:
         platform: ${{ fromJson(inputs.platforms) }}
       fail-fast: false
     runs-on: ${{ contains(matrix.platform, 'windows') && 'windows-latest' || 'ubuntu-latest' }}
-    name: Package (${{ matrix.platform }})
+    name: Package (${{ matrix.platform }}, ${{ inputs.profile }})
 
     outputs:
-      # Forward outputs from the last matrix leg — release job only needs
-      # cuda-version and cudnn-version which are identical across platforms.
       cuda-version: ${{ steps.build.outputs.cuda-version }}
       cudnn-version: ${{ steps.build.outputs.cudnn-version }}
+      profile: ${{ steps.build.outputs.profile }}
 
     steps:
       - name: Resolve platform
@@ -72,12 +79,13 @@ jobs:
             --cudnn-version "${{ inputs.cudnn-version }}" \
             --os "${{ steps.platform.outputs.os }}" \
             --arch "${{ steps.platform.outputs.arch }}" \
+            --profile "${{ inputs.profile }}" \
             --output-dir ./output
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cuda-${{ steps.build.outputs.cuda-version }}-cudnn-${{ steps.build.outputs.cudnn-version }}-${{ steps.build.outputs.platform }}
+          name: ${{ steps.build.outputs.archive-name }}
           path: ./output/*
 
   release:
@@ -97,12 +105,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: cuda-${{ needs.package.outputs.cuda-version }}-cudnn-${{ needs.package.outputs.cudnn-version }}
-          name: CUDA ${{ needs.package.outputs.cuda-version }} + cuDNN ${{ needs.package.outputs.cudnn-version }} Runtime
+          name: CUDA ${{ needs.package.outputs.cuda-version }} + cuDNN ${{ needs.package.outputs.cudnn-version }} Runtime (${{ needs.package.outputs.profile }})
           body: |
             CUDA/cuDNN runtime libraries.
 
             - CUDA: ${{ needs.package.outputs.cuda-version }}
             - cuDNN: ${{ needs.package.outputs.cudnn-version }}
+            - Profile: ${{ needs.package.outputs.profile }}
             - Platforms: ${{ inputs.platforms }}
           files: artifacts/*
           draft: false

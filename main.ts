@@ -3,12 +3,15 @@ import { join } from "@std/path";
 import { ensureDir } from "@std/fs/ensure-dir";
 import {
   CUDA_RUNTIME_PACKAGES,
+  MINIMAL_PREFIXES,
   VALID_PLATFORMS,
+  VALID_PROFILES,
   buildPlatform,
   detectOS,
   detectArch,
-  type OS,
   type Arch,
+  type OS,
+  type Profile,
 } from "./src/config.ts";
 import {
   findLatestCompatibleCudnn,
@@ -33,23 +36,25 @@ Options:
                          ""     = skip cuDNN
   --os <os>              Target OS: windows, linux (default: auto-detect)
   --arch <arch>          Target arch: x86_64, aarch64 (default: auto-detect)
+  --profile <profile>    Build profile: full, minimal (default: full)
   --output-dir <dir>     Output directory (default: ./output)
   --work-dir <dir>       Working directory for downloads (default: ./tmp)
   --skip-verify          Skip SHA256 verification
   --help                 Show this help
 
 Supported platforms: ${VALID_PLATFORMS.join(", ")}
+Profiles: ${VALID_PROFILES.join(", ")}
 
 Examples:
   deno run -A main.ts --cuda-version 12.8.1
+  deno run -A main.ts --cuda-version 12.6.3 --profile minimal
   deno run -A main.ts --cuda-version 12.6.3 --os linux --arch x86_64
-  deno run -A main.ts --cuda-version 12.6.3 --cudnn-version 9.5.1
   deno run -A main.ts --cuda-version 12.6.3 --cudnn-version ""
 `);
 }
 
 const args = parseArgs(Deno.args, {
-  string: ["cuda-version", "cudnn-version", "os", "arch", "output-dir", "work-dir"],
+  string: ["cuda-version", "cudnn-version", "os", "arch", "profile", "output-dir", "work-dir"],
   boolean: ["help", "skip-verify"],
   default: {
     "cuda-version": "12.6.3",
@@ -70,6 +75,11 @@ const cudaMajor = parseInt(cudaVersion.split(".")[0]);
 const os: OS = (args["os"] as OS) || detectOS();
 const arch: Arch = (args["arch"] as Arch) || detectArch();
 const platform = buildPlatform(os, arch);
+const profile: Profile = (args["profile"] as Profile) || "full";
+if (!VALID_PROFILES.includes(profile)) {
+  console.error(`Invalid profile: ${profile} (valid: ${VALID_PROFILES.join(", ")})`);
+  Deno.exit(1);
+}
 const outputDir = args["output-dir"];
 const workDir = args["work-dir"];
 const skipVerify = args["skip-verify"];
@@ -77,6 +87,7 @@ const skipVerify = args["skip-verify"];
 console.log("=== CUDA Runtime Packager ===");
 console.log(`CUDA version:  ${cudaVersion}`);
 console.log(`Platform:      ${platform}`);
+console.log(`Profile:       ${profile}`);
 
 // Auto-detect cuDNN version if requested
 if (cudnnVersion === "auto") {
@@ -151,7 +162,10 @@ for (const pkg of allPackages) {
 
 // Step 4: Collect runtime libraries
 console.log("\n--- Collecting runtime libraries ---");
-const libs = await collectRuntimeLibs(extractDir, collectDir, os);
+const allowPrefixes = profile === "minimal"
+  ? [...MINIMAL_PREFIXES[os].cuda, ...(cudnnVersion ? MINIMAL_PREFIXES[os].cudnn : [])]
+  : undefined;
+const libs = await collectRuntimeLibs(extractDir, collectDir, os, allowPrefixes);
 console.log(`Collected ${libs.length} files:`);
 for (const lib of libs) {
   console.log(`  ${lib}`);
@@ -162,6 +176,7 @@ const metadata = {
   cuda_version: cudaVersion,
   cudnn_version: cudnnVersion || null,
   platform,
+  profile,
   packages: allPackages.map((p) => ({
     name: p.packageName,
     display_name: p.displayName,
@@ -180,6 +195,7 @@ const archiveExt = os === "windows" ? ".zip" : ".tar.gz";
 const archiveNameParts = [`cuda-${cudaVersion}`];
 if (cudnnVersion) archiveNameParts.push(`cudnn-${cudnnVersion}`);
 archiveNameParts.push(platform);
+if (profile !== "full") archiveNameParts.push(profile);
 const archiveName = archiveNameParts.join("-") + archiveExt;
 const archivePath = join(outputDir, archiveName);
 
@@ -200,6 +216,7 @@ if (githubOutput) {
     `cuda-version=${cudaVersion}`,
     `cudnn-version=${cudnnVersion || ""}`,
     `platform=${platform}`,
+    `profile=${profile}`,
     `archive-name=${archiveName}`,
   ].join("\n") + "\n";
   await Deno.writeTextFile(githubOutput, outputs, { append: true });

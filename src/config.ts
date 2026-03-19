@@ -84,3 +84,54 @@ export const CUDA_RUNTIME_PACKAGES = [
   "libcusparse", // Sparse Matrix Operations
   "libnvjitlink", // JIT Link Library (CUDA 12+)
 ];
+
+/** Build profile — controls which runtime libraries are included */
+export type Profile = "full" | "minimal";
+
+export const VALID_PROFILES: readonly Profile[] = ["full", "minimal"];
+
+/**
+ * Filename prefixes for the minimal profile.
+ * Uses prefixes (before the version number) so matching works across CUDA/cuDNN versions.
+ * e.g. "cudart64_" matches "cudart64_12.dll" (CUDA 12) and "cudart64_13.dll" (CUDA 13).
+ */
+export const MINIMAL_PREFIXES: Record<OS, { cuda: string[]; cudnn: string[] }> = {
+  windows: {
+    cuda: [
+      "cudart64_",
+      "cublas64_",
+      "cublasLt64_",
+      "cufft64_",
+    ],
+    cudnn: [
+      "cudnn64_",
+      "cudnn_graph64_",
+      "cudnn_ops64_",
+      "cudnn_heuristic64_",
+      "cudnn_adv64_",
+      "cudnn_cnn64_",
+      "cudnn_engines_precompiled64_",
+      "cudnn_engines_runtime_compiled64_",
+    ],
+  },
+  linux: {
+    cuda: [
+      "libcudart.so.",
+      "libcublas.so.",
+      "libcublasLt.so.",
+      "libnvrtc.so.",
+      "libcurand.so.",
+      "libcufft.so.",
+    ],
+    cudnn: [
+      "libcudnn.so.",
+      "libcudnn_graph.so.",
+      "libcudnn_ops.so.",
+      "libcudnn_heuristic.so.",
+      "libcudnn_adv.so.",
+      "libcudnn_cnn.so.",
+      "libcudnn_engines_precompiled.so.",
+      "libcudnn_engines_runtime_compiled.so.",
+    ],
+  },
+};

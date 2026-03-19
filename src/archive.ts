@@ -69,11 +69,15 @@ async function extractZip(
  * Collect runtime library files from extracted packages.
  * - Windows: .dll files from bin/ directories
  * - Linux: .so files (including versioned like .so.12) from lib/ directories
+ *
+ * @param allowPrefixes If provided, only collect files whose name starts with
+ *   one of these prefixes (used by the minimal profile).
  */
 export async function collectRuntimeLibs(
   extractDir: string,
   outputDir: string,
   os: OS,
+  allowPrefixes?: string[],
 ): Promise<string[]> {
   await ensureDir(outputDir);
   const collected: string[] = [];
@@ -92,6 +96,11 @@ export async function collectRuntimeLibs(
     } else {
       // Linux: match .so and versioned .so.X.Y.Z
       if (!name.includes(".so")) continue;
+    }
+
+    // Apply prefix allowlist filter (minimal profile)
+    if (allowPrefixes && !allowPrefixes.some((p) => name.startsWith(p))) {
+      continue;
     }
 
     // Skip if already collected (avoid duplicates)
