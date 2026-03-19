@@ -1,7 +1,15 @@
 import { parseArgs } from "@std/cli/parse-args";
 import { join } from "@std/path";
 import { ensureDir } from "@std/fs/ensure-dir";
-import { CUDA_RUNTIME_PACKAGES } from "./src/config.ts";
+import {
+  CUDA_RUNTIME_PACKAGES,
+  VALID_PLATFORMS,
+  buildPlatform,
+  detectOS,
+  detectArch,
+  type OS,
+  type Arch,
+} from "./src/config.ts";
 import {
   findLatestCompatibleCudnn,
   resolveCudaPackages,
@@ -9,11 +17,11 @@ import {
   type PackageDownloadInfo,
 } from "./src/manifest.ts";
 import { downloadFile, formatBytes, verifySha256 } from "./src/download.ts";
-import { collectDlls, createZip, extractZip } from "./src/archive.ts";
+import { collectRuntimeLibs, createArchive, extractArchive } from "./src/archive.ts";
 
 function printUsage() {
   console.log(`CUDA Runtime Packager
-Download and package CUDA/cuDNN runtime libraries for Windows.
+Download and package CUDA/cuDNN runtime libraries.
 
 Usage:
   deno run -A main.ts [options]
@@ -23,20 +31,25 @@ Options:
   --cudnn-version <ver>  cuDNN version (default: auto)
                          "auto" = find latest compatible version
                          ""     = skip cuDNN
+  --os <os>              Target OS: windows, linux (default: auto-detect)
+  --arch <arch>          Target arch: x86_64, aarch64 (default: auto-detect)
   --output-dir <dir>     Output directory (default: ./output)
   --work-dir <dir>       Working directory for downloads (default: ./tmp)
   --skip-verify          Skip SHA256 verification
   --help                 Show this help
 
+Supported platforms: ${VALID_PLATFORMS.join(", ")}
+
 Examples:
   deno run -A main.ts --cuda-version 12.8.1
+  deno run -A main.ts --cuda-version 12.6.3 --os linux --arch x86_64
   deno run -A main.ts --cuda-version 12.6.3 --cudnn-version 9.5.1
   deno run -A main.ts --cuda-version 12.6.3 --cudnn-version ""
 `);
 }
 
 const args = parseArgs(Deno.args, {
-  string: ["cuda-version", "cudnn-version", "output-dir", "work-dir"],
+  string: ["cuda-version", "cudnn-version", "os", "arch", "output-dir", "work-dir"],
   boolean: ["help", "skip-verify"],
   default: {
     "cuda-version": "12.6.3",
@@ -54,16 +67,20 @@ if (args.help) {
 const cudaVersion = args["cuda-version"];
 let cudnnVersion = args["cudnn-version"];
 const cudaMajor = parseInt(cudaVersion.split(".")[0]);
+const os: OS = (args["os"] as OS) || detectOS();
+const arch: Arch = (args["arch"] as Arch) || detectArch();
+const platform = buildPlatform(os, arch);
 const outputDir = args["output-dir"];
 const workDir = args["work-dir"];
 const skipVerify = args["skip-verify"];
 
 console.log("=== CUDA Runtime Packager ===");
 console.log(`CUDA version:  ${cudaVersion}`);
+console.log(`Platform:      ${platform}`);
 
 // Auto-detect cuDNN version if requested
 if (cudnnVersion === "auto") {
-  const result = await findLatestCompatibleCudnn(cudaMajor);
+  const result = await findLatestCompatibleCudnn(cudaMajor, platform);
   cudnnVersion = result.version;
 }
 
@@ -82,7 +99,7 @@ await ensureDir(outputDir);
 
 // Step 1: Resolve packages from NVIDIA redistributable manifests
 console.log("--- Resolving CUDA packages ---");
-const cudaPackages = await resolveCudaPackages(cudaVersion, CUDA_RUNTIME_PACKAGES);
+const cudaPackages = await resolveCudaPackages(cudaVersion, CUDA_RUNTIME_PACKAGES, platform);
 for (const pkg of cudaPackages) {
   console.log(`  ${pkg.displayName} v${pkg.version} (${formatBytes(pkg.size)})`);
 }
@@ -90,7 +107,7 @@ for (const pkg of cudaPackages) {
 let cudnnPackages: PackageDownloadInfo[] = [];
 if (cudnnVersion) {
   console.log("\n--- Resolving cuDNN packages ---");
-  cudnnPackages = await resolveCudnnPackages(cudnnVersion, cudaMajor);
+  cudnnPackages = await resolveCudnnPackages(cudnnVersion, cudaMajor, platform);
   for (const pkg of cudnnPackages) {
     console.log(`  ${pkg.displayName} v${pkg.version} (${formatBytes(pkg.size)})`);
   }
@@ -126,31 +143,31 @@ for (const pkg of allPackages) {
 console.log("\n--- Extracting packages ---");
 for (const pkg of allPackages) {
   const fileName = pkg.url.split("/").pop()!;
-  const zipPath = join(downloadDir, fileName);
+  const archivePath = join(downloadDir, fileName);
   const pkgExtractDir = join(extractDir, pkg.packageName);
   console.log(`\n[${pkg.displayName}]`);
-  await extractZip(zipPath, pkgExtractDir);
+  await extractArchive(archivePath, pkgExtractDir);
 }
 
-// Step 4: Collect runtime DLLs
-console.log("\n--- Collecting runtime DLLs ---");
-const dlls = await collectDlls(extractDir, collectDir);
-console.log(`Collected ${dlls.length} DLLs:`);
-for (const dll of dlls) {
-  console.log(`  ${dll}`);
+// Step 4: Collect runtime libraries
+console.log("\n--- Collecting runtime libraries ---");
+const libs = await collectRuntimeLibs(extractDir, collectDir, os);
+console.log(`Collected ${libs.length} files:`);
+for (const lib of libs) {
+  console.log(`  ${lib}`);
 }
 
 // Step 5: Write metadata
 const metadata = {
   cuda_version: cudaVersion,
   cudnn_version: cudnnVersion || null,
-  platform: "windows-x86_64",
+  platform,
   packages: allPackages.map((p) => ({
     name: p.packageName,
     display_name: p.displayName,
     version: p.version,
   })),
-  files: dlls,
+  files: libs,
   created_at: new Date().toISOString(),
 };
 await Deno.writeTextFile(
@@ -159,18 +176,19 @@ await Deno.writeTextFile(
 );
 
 // Step 6: Create output archive
+const archiveExt = os === "windows" ? ".zip" : ".tar.gz";
 const archiveNameParts = [`cuda-${cudaVersion}`];
 if (cudnnVersion) archiveNameParts.push(`cudnn-${cudnnVersion}`);
-archiveNameParts.push("windows-x86_64");
-const archiveName = archiveNameParts.join("-") + ".zip";
+archiveNameParts.push(platform);
+const archiveName = archiveNameParts.join("-") + archiveExt;
 const archivePath = join(outputDir, archiveName);
 
 console.log("\n--- Creating archive ---");
-await createZip(collectDir, archivePath);
+await createArchive(collectDir, archivePath, os);
 
 // Print summary
 const archiveStat = await Deno.stat(archivePath);
 console.log("\n=== Done! ===");
 console.log(`Archive: ${archivePath}`);
 console.log(`Size:    ${formatBytes(archiveStat.size)}`);
-console.log(`DLLs:    ${dlls.length} files`);
+console.log(`Files:   ${libs.length}`);

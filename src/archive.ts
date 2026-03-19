@@ -1,71 +1,94 @@
 import { ensureDir } from "@std/fs/ensure-dir";
 import { walk } from "@std/fs/walk";
-import { join, basename, dirname, resolve } from "@std/path";
+import { join, basename, dirname, resolve, extname } from "@std/path";
+import { type OS, runtimeLibDir } from "./config.ts";
 
 /**
- * Extract a ZIP archive.
- * Uses `tar` (built-in on Windows 10+), falls back to PowerShell.
+ * Extract an archive (ZIP or tar.xz) to a destination directory.
  */
-export async function extractZip(
-  zipPath: string,
+export async function extractArchive(
+  archivePath: string,
   destDir: string,
 ): Promise<void> {
   await ensureDir(destDir);
-  console.log(`  Extracting: ${basename(zipPath)}`);
+  const name = basename(archivePath);
+  console.log(`  Extracting: ${name}`);
 
-  // Try tar first (built-in on Windows 10+)
-  try {
+  if (name.endsWith(".tar.xz")) {
+    // Linux tar.xz
     const cmd = new Deno.Command("tar", {
-      args: ["-xf", zipPath, "-C", destDir],
+      args: ["-xf", archivePath, "-C", destDir],
       stdout: "piped",
       stderr: "piped",
     });
     const result = await cmd.output();
-    if (result.code === 0) return;
-    console.warn(`  tar failed (code ${result.code}), trying PowerShell...`);
-  } catch {
-    console.warn(`  tar not available, trying PowerShell...`);
-  }
+    if (result.code !== 0) {
+      const err = new TextDecoder().decode(result.stderr);
+      throw new Error(`Failed to extract ${name}: ${err}`);
+    }
+  } else {
+    // ZIP (Windows) — try tar first, then PowerShell fallback
+    try {
+      const cmd = new Deno.Command("tar", {
+        args: ["-xf", archivePath, "-C", destDir],
+        stdout: "piped",
+        stderr: "piped",
+      });
+      const result = await cmd.output();
+      if (result.code === 0) return;
+      console.warn(`  tar failed (code ${result.code}), trying PowerShell...`);
+    } catch {
+      console.warn(`  tar not available, trying PowerShell...`);
+    }
 
-  // PowerShell fallback
-  const cmd = new Deno.Command("powershell", {
-    args: [
-      "-NoProfile",
-      "-Command",
-      `Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${destDir}' -Force`,
-    ],
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const result = await cmd.output();
-  if (result.code !== 0) {
-    const err = new TextDecoder().decode(result.stderr);
-    throw new Error(`Failed to extract ${zipPath}: ${err}`);
+    const cmd = new Deno.Command("powershell", {
+      args: [
+        "-NoProfile",
+        "-Command",
+        `Expand-Archive -LiteralPath '${archivePath}' -DestinationPath '${destDir}' -Force`,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const result = await cmd.output();
+    if (result.code !== 0) {
+      const err = new TextDecoder().decode(result.stderr);
+      throw new Error(`Failed to extract ${name}: ${err}`);
+    }
   }
 }
 
 /**
- * Collect all DLL files from `bin/` directories within the extracted packages.
+ * Collect runtime library files from extracted packages.
+ * - Windows: .dll files from bin/ directories
+ * - Linux: .so files (including versioned like .so.12) from lib/ directories
  */
-export async function collectDlls(
+export async function collectRuntimeLibs(
   extractDir: string,
   outputDir: string,
+  os: OS,
 ): Promise<string[]> {
   await ensureDir(outputDir);
   const collected: string[] = [];
+  const libDir = runtimeLibDir(os);
 
-  for await (const entry of walk(extractDir, {
-    exts: [".dll"],
-    includeDirs: false,
-  })) {
-    // Only collect DLLs from bin/ directories
+  for await (const entry of walk(extractDir, { includeDirs: false })) {
+    const name = basename(entry.path);
+
+    // Check the file is inside the correct lib directory (bin/ or lib/)
     const pathParts = entry.path.split(/[/\\]/);
-    if (!pathParts.includes("bin")) continue;
+    if (!pathParts.includes(libDir)) continue;
 
-    const dllName = basename(entry.path);
+    // Match runtime library files by extension
+    if (os === "windows") {
+      if (extname(name).toLowerCase() !== ".dll") continue;
+    } else {
+      // Linux: match .so and versioned .so.X.Y.Z
+      if (!name.includes(".so")) continue;
+    }
 
-    // Skip if already collected (avoid duplicates from different packages)
-    const destPath = join(outputDir, dllName);
+    // Skip if already collected (avoid duplicates)
+    const destPath = join(outputDir, name);
     try {
       await Deno.stat(destPath);
       continue;
@@ -74,19 +97,21 @@ export async function collectDlls(
     }
 
     await Deno.copyFile(entry.path, destPath);
-    collected.push(dllName);
+    collected.push(name);
   }
 
   return collected.sort();
 }
 
 /**
- * Create a ZIP archive from a directory.
- * Tries 7z first, falls back to PowerShell .NET compression.
+ * Create a compressed archive from a directory.
+ * - Windows: ZIP via 7z or PowerShell
+ * - Linux: tar.gz via tar
  */
-export async function createZip(
+export async function createArchive(
   inputDir: string,
   outputPath: string,
+  os: OS,
 ): Promise<void> {
   const absInput = resolve(inputDir);
   const absOutput = resolve(outputPath);
@@ -101,6 +126,23 @@ export async function createZip(
 
   console.log(`Creating archive: ${basename(outputPath)}`);
 
+  if (os === "linux" || outputPath.endsWith(".tar.gz")) {
+    // tar.gz
+    const cmd = new Deno.Command("tar", {
+      args: ["-czf", absOutput, "-C", absInput, "."],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const result = await cmd.output();
+    if (result.code !== 0) {
+      const err = new TextDecoder().decode(result.stderr);
+      throw new Error(`Failed to create tar.gz: ${err}`);
+    }
+    console.log(`  Created tar.gz`);
+    return;
+  }
+
+  // ZIP for Windows
   // Try 7z first (available on GitHub Actions runners)
   try {
     const cmd = new Deno.Command("7z", {
@@ -117,7 +159,7 @@ export async function createZip(
     // 7z not available
   }
 
-  // PowerShell .NET fallback (no 2GB limit unlike Compress-Archive)
+  // PowerShell .NET fallback
   const psScript =
     `Add-Type -Assembly System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory('${absInput}', '${absOutput}')`;
   const cmd = new Deno.Command("powershell", {

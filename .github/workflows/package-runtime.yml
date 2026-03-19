@@ -11,6 +11,10 @@ on:
         description: "cuDNN version: 'auto' (latest compatible), specific version, or empty to skip"
         required: false
         default: "auto"
+      platforms:
+        description: "Platforms to build (JSON array)"
+        required: false
+        default: '["windows-x86_64", "linux-x86_64"]'
       create-release:
         description: "Create a GitHub release with the archive"
         required: false
@@ -22,9 +26,24 @@ permissions:
 
 jobs:
   package:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        include: ${{ fromJson(inputs.platforms) }}
+      fail-fast: false
+    runs-on: ${{ contains(matrix.platform || fromJson(inputs.platforms)[0], 'windows') && 'windows-latest' || 'ubuntu-latest' }}
+    name: Package (${{ matrix.platform || fromJson(inputs.platforms)[0] }})
 
     steps:
+      - name: Resolve platform
+        id: platform
+        shell: bash
+        run: |
+          # When matrix.platform is a string from the JSON array, parse os and arch
+          PLATFORM="${{ matrix.platform || fromJson(inputs.platforms)[0] }}"
+          echo "platform=${PLATFORM}" >> "$GITHUB_OUTPUT"
+          echo "os=${PLATFORM%%-*}" >> "$GITHUB_OUTPUT"
+          echo "arch=${PLATFORM##*-}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -37,7 +56,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ./tmp/downloads
-          key: cuda-downloads-${{ inputs.cuda-version }}-${{ inputs.cudnn-version }}
+          key: cuda-downloads-${{ inputs.cuda-version }}-${{ inputs.cudnn-version }}-${{ steps.platform.outputs.platform }}
 
       - name: Package CUDA Runtime
         shell: bash
@@ -45,26 +64,39 @@ jobs:
           deno run -A main.ts \
             --cuda-version "${{ inputs.cuda-version }}" \
             --cudnn-version "${{ inputs.cudnn-version }}" \
+            --os "${{ steps.platform.outputs.os }}" \
+            --arch "${{ steps.platform.outputs.arch }}" \
             --output-dir ./output
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cuda-runtime-${{ inputs.cuda-version }}-cudnn-${{ inputs.cudnn-version }}
-          path: ./output/*.zip
+          name: cuda-runtime-${{ inputs.cuda-version }}-${{ steps.platform.outputs.platform }}
+          path: ./output/*
+
+  release:
+    if: ${{ inputs.create-release }}
+    needs: package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: cuda-runtime-*
+          merge-multiple: true
 
       - name: Create release
-        if: ${{ inputs.create-release }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: cuda-${{ inputs.cuda-version }}-cudnn-${{ inputs.cudnn-version }}
           name: CUDA ${{ inputs.cuda-version }} + cuDNN ${{ inputs.cudnn-version }} Runtime
           body: |
-            CUDA/cuDNN runtime libraries for Windows x86_64.
+            CUDA/cuDNN runtime libraries.
 
             - CUDA: ${{ inputs.cuda-version }}
             - cuDNN: ${{ inputs.cudnn-version }}
-
-            Contains only runtime DLLs needed for deployment.
-          files: ./output/*.zip
+            - Platforms: ${{ inputs.platforms }}
+          files: artifacts/*
           draft: false

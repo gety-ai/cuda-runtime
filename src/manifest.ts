@@ -1,7 +1,7 @@
 import {
   CUDA_REDIST_BASE_URL,
   CUDNN_REDIST_BASE_URL,
-  PLATFORM,
+  type Platform,
 } from "./config.ts";
 import { http } from "./http.ts";
 
@@ -45,8 +45,9 @@ function compareVersions(a: string, b: string): number {
  */
 export async function findLatestCompatibleCudnn(
   cudaMajorVersion: number,
+  platform: Platform,
 ): Promise<{ version: string; fullVersion: string }> {
-  console.log(`Searching for latest cuDNN compatible with CUDA ${cudaMajorVersion}...`);
+  console.log(`Searching for latest cuDNN compatible with CUDA ${cudaMajorVersion} on ${platform}...`);
 
   // Fetch directory listing
   const html = await http.get(`${CUDNN_REDIST_BASE_URL}/`).text();
@@ -72,9 +73,9 @@ export async function findLatestCompatibleCudnn(
     try {
       const manifest: Manifest = await http.get(manifestUrl).json();
       const cudnn = manifest["cudnn"];
-      if (!cudnn?.[PLATFORM]) continue;
+      if (!cudnn?.[platform]) continue;
 
-      const platformInfo = cudnn[PLATFORM];
+      const platformInfo = cudnn[platform];
       if (platformInfo[`cuda${cudaMajorVersion}`]) {
         console.log(`  Found: cuDNN ${ver} (${cudnn.version}) supports CUDA ${cudaMajorVersion}`);
         return { version: ver, fullVersion: cudnn.version };
@@ -85,7 +86,7 @@ export async function findLatestCompatibleCudnn(
   }
 
   throw new Error(
-    `No cuDNN version found that supports CUDA ${cudaMajorVersion}`,
+    `No cuDNN version found that supports CUDA ${cudaMajorVersion} on ${platform}`,
   );
 }
 
@@ -95,6 +96,7 @@ export async function findLatestCompatibleCudnn(
 export async function resolveCudaPackages(
   cudaVersion: string,
   packageNames: string[],
+  platform: Platform,
 ): Promise<PackageDownloadInfo[]> {
   const manifest = await fetchManifest(
     `${CUDA_REDIST_BASE_URL}/redistrib_${cudaVersion}.json`,
@@ -107,9 +109,9 @@ export async function resolveCudaPackages(
       console.warn(`  Warning: '${name}' not found in CUDA ${cudaVersion} manifest, skipping`);
       continue;
     }
-    const platformInfo = pkg[PLATFORM];
+    const platformInfo = pkg[platform];
     if (!platformInfo) {
-      console.warn(`  Warning: '${name}' has no ${PLATFORM} build, skipping`);
+      console.warn(`  Warning: '${name}' has no ${platform} build, skipping`);
       continue;
     }
     results.push({
@@ -131,6 +133,7 @@ export async function resolveCudaPackages(
 export async function resolveCudnnPackages(
   cudnnVersion: string,
   cudaMajorVersion: number,
+  platform: Platform,
 ): Promise<PackageDownloadInfo[]> {
   const manifest = await fetchManifest(
     `${CUDNN_REDIST_BASE_URL}/redistrib_${cudnnVersion}.json`,
@@ -144,7 +147,7 @@ export async function resolveCudnnPackages(
     // Skip manifest metadata fields
     if (!pkgObj.version) continue;
 
-    const platformInfo = pkgObj[PLATFORM];
+    const platformInfo = pkgObj[platform];
     if (!platformInfo) continue;
 
     // cuDNN platform info may have cuda-version sub-keys like "cuda12"
