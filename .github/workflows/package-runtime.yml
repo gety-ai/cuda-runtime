@@ -1,0 +1,66 @@
+name: Package CUDA Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      cuda-version:
+        description: "CUDA version (e.g., 12.6.3, 12.8.1)"
+        required: true
+        default: "12.6.3"
+      cudnn-version:
+        description: "cuDNN version: 'auto' (latest compatible), specific version, or empty to skip"
+        required: false
+        default: "auto"
+      create-release:
+        description: "Create a GitHub release with the archive"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  package:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: ./tmp/downloads
+          key: cuda-downloads-${{ inputs.cuda-version }}-${{ inputs.cudnn-version }}
+
+      - name: Package CUDA Runtime
+        run: |
+          deno run -A main.ts \
+            --cuda-version "${{ inputs.cuda-version }}" \
+            --cudnn-version "${{ inputs.cudnn-version }}" \
+            --output-dir ./output
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-runtime-${{ inputs.cuda-version }}-cudnn-${{ inputs.cudnn-version }}
+          path: ./output/*.zip
+
+      - name: Create release
+        if: ${{ inputs.create-release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: cuda-${{ inputs.cuda-version }}-cudnn-${{ inputs.cudnn-version }}
+          name: CUDA ${{ inputs.cuda-version }} + cuDNN ${{ inputs.cudnn-version }} Runtime
+          body: |
+            CUDA/cuDNN runtime libraries for Windows x86_64.
+
+            - CUDA: ${{ inputs.cuda-version }}
+            - cuDNN: ${{ inputs.cudnn-version }}
+
+            Contains only runtime DLLs needed for deployment.
+          files: ./output/*.zip
+          draft: false
