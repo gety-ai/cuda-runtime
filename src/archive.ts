@@ -83,7 +83,7 @@ export async function collectRuntimeLibs(
   const collected: string[] = [];
   const libDir = runtimeLibDir(os);
 
-  for await (const entry of walk(extractDir, { includeDirs: false })) {
+  for await (const entry of walk(extractDir, { includeDirs: false, followSymlinks: false })) {
     const name = basename(entry.path);
 
     // Check the file is inside the correct lib directory (bin/ or lib/)
@@ -106,13 +106,20 @@ export async function collectRuntimeLibs(
     // Skip if already collected (avoid duplicates)
     const destPath = join(outputDir, name);
     try {
-      await Deno.stat(destPath);
+      await Deno.lstat(destPath);
       continue;
     } catch {
       // Not yet collected
     }
 
-    await Deno.copyFile(entry.path, destPath);
+    // Preserve symlinks (Linux .so versioning: libfoo.so.12 -> libfoo.so.12.6.4.1)
+    const stat = await Deno.lstat(entry.path);
+    if (stat.isSymlink) {
+      const target = await Deno.readLink(entry.path);
+      await Deno.symlink(target, destPath);
+    } else {
+      await Deno.copyFile(entry.path, destPath);
+    }
     collected.push(name);
   }
 
