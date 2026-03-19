@@ -1,10 +1,13 @@
 import { ensureDir } from "@std/fs/ensure-dir";
 import { walk } from "@std/fs/walk";
-import { join, basename, dirname, resolve, extname } from "@std/path";
+import { basename, dirname, extname, join, resolve } from "@std/path";
+import { BlobReader, Uint8ArrayWriter, ZipReader } from "@zip.js/zip.js";
 import { type OS, runtimeLibDir } from "./config.ts";
 
 /**
- * Extract an archive (ZIP or tar.xz) to a destination directory.
+ * Extract an archive to a destination directory.
+ * - .zip: Pure JS extraction via zip.js (cross-platform, no external tools)
+ * - .tar.xz: tar command (Linux)
  */
 export async function extractArchive(
   archivePath: string,
@@ -15,46 +18,50 @@ export async function extractArchive(
   console.log(`  Extracting: ${name}`);
 
   if (name.endsWith(".tar.xz")) {
-    // Linux tar.xz
-    const cmd = new Deno.Command("tar", {
-      args: ["-xf", archivePath, "-C", destDir],
-      stdout: "piped",
-      stderr: "piped",
-    });
-    const result = await cmd.output();
-    if (result.code !== 0) {
-      const err = new TextDecoder().decode(result.stderr);
-      throw new Error(`Failed to extract ${name}: ${err}`);
-    }
+    await extractTarXz(archivePath, destDir);
+  } else if (name.endsWith(".zip")) {
+    await extractZip(archivePath, destDir);
   } else {
-    // ZIP (Windows) — try tar first, then PowerShell fallback
-    try {
-      const cmd = new Deno.Command("tar", {
-        args: ["-xf", archivePath, "-C", destDir],
-        stdout: "piped",
-        stderr: "piped",
-      });
-      const result = await cmd.output();
-      if (result.code === 0) return;
-      console.warn(`  tar failed (code ${result.code}), trying PowerShell...`);
-    } catch {
-      console.warn(`  tar not available, trying PowerShell...`);
-    }
+    throw new Error(`Unsupported archive format: ${name}`);
+  }
+}
 
-    const cmd = new Deno.Command("powershell", {
-      args: [
-        "-NoProfile",
-        "-Command",
-        `Expand-Archive -LiteralPath '${archivePath}' -DestinationPath '${destDir}' -Force`,
-      ],
-      stdout: "piped",
-      stderr: "piped",
-    });
-    const result = await cmd.output();
-    if (result.code !== 0) {
-      const err = new TextDecoder().decode(result.stderr);
-      throw new Error(`Failed to extract ${name}: ${err}`);
+/** Extract a .tar.xz archive using the tar command */
+async function extractTarXz(
+  archivePath: string,
+  destDir: string,
+): Promise<void> {
+  const cmd = new Deno.Command("tar", {
+    args: ["-xf", archivePath, "-C", destDir],
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const result = await cmd.output();
+  if (result.code !== 0) {
+    const err = new TextDecoder().decode(result.stderr);
+    throw new Error(`Failed to extract ${basename(archivePath)}: ${err}`);
+  }
+}
+
+/** Extract a .zip archive using zip.js (pure JS, no external tools) */
+async function extractZip(
+  zipPath: string,
+  destDir: string,
+): Promise<void> {
+  const data = await Deno.readFile(zipPath);
+  const reader = new ZipReader(new BlobReader(new Blob([data])));
+  try {
+    const entries = await reader.getEntries();
+    for (const entry of entries) {
+      if (entry.directory) continue;
+      if (!entry.getData) continue;
+      const destPath = join(destDir, entry.filename);
+      await ensureDir(dirname(destPath));
+      const content = await entry.getData(new Uint8ArrayWriter());
+      await Deno.writeFile(destPath, content);
     }
+  } finally {
+    await reader.close();
   }
 }
 

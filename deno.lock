@@ -6,6 +6,8 @@
     "jsr:@std/internal@^1.0.9": "1.0.10",
     "jsr:@std/path@1": "1.1.1",
     "jsr:@std/path@^1.1.1": "1.1.1",
+    "npm:@zip.js/zip.js@*": "2.8.23",
+    "npm:@zip.js/zip.js@2": "2.8.23",
     "npm:ky@1": "1.14.3"
   },
   "jsr": {
@@ -29,6 +31,10 @@
     }
   },
   "npm": {
+    "@zip.js/zip.js@2.8.23": {
+      "integrity": "sha512-RB+RLnxPJFPrGvQ9rgO+4JOcsob6lD32OcF0QE0yg24oeW9q8KnTTNlugcDaIveEcCbclobJcZP+fLQ++sH0bw==",
+      "tarball": "https://registry.npmmirror.com/@zip.js/zip.js/-/zip.js-2.8.23.tgz"
+    },
     "ky@1.14.3": {
       "integrity": "sha512-9zy9lkjac+TR1c2tG+mkNSVlyOpInnWdSMiue4F+kq8TwJSgv6o8jhLRg8Ho6SnZ9wOYUq/yozts9qQCfk7bIw==",
       "tarball": "https://registry.npmmirror.com/ky/-/ky-1.14.3.tgz"
@@ -39,6 +45,7 @@
       "jsr:@std/cli@1",
       "jsr:@std/fs@1",
       "jsr:@std/path@1",
+      "npm:@zip.js/zip.js@2",
       "npm:ky@1"
     ]
   }
