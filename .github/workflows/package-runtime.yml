@@ -37,6 +37,7 @@ jobs:
           key: cuda-downloads-${{ inputs.cuda-version }}-${{ inputs.cudnn-version }}
 
       - name: Package CUDA Runtime
+        shell: bash
         run: |
           deno run -A main.ts \
             --cuda-version "${{ inputs.cuda-version }}" \
